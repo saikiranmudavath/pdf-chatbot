@@ -43,13 +43,29 @@ def extract_text(pdf_file):
 # -----------------------------
 def chunk_text(text):
 
-    paragraphs = [
-        p.strip()
-        for p in text.split("\n")
-        if p.strip()
-    ]
+    chunks = []
+    current_chunk = ""
 
-    return paragraphs
+    lines = text.split("\n")
+
+    for line in lines:
+
+        line = line.strip()
+
+        if not line:
+            continue
+
+        current_chunk += line + "\n"
+
+        # create a chunk after ~300 characters
+        if len(current_chunk) >= 300:
+            chunks.append(current_chunk.strip())
+            current_chunk = ""
+
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+
+    return chunks
 
 
 # -----------------------------
