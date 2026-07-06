@@ -37,7 +37,7 @@ def create_index(chunks):
     return index
 
 # Search
-def search(query, index, chunks, k=3):
+def search(query, index, chunks, k=1):
     query_embedding = model.encode([query])
     distances, indices = index.search(np.array(query_embedding), k)
 
