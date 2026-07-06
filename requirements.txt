@@ -2,4 +2,6 @@ streamlit
 pypdf
 sentence-transformers
 faiss-cpu
+langchain
+ollama
 numpy
