@@ -1,25 +1,23 @@
 import streamlit as st
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 import faiss
 import numpy as np
-import ollama
 
 st.set_page_config(page_title="PDF Chatbot", page_icon="📄")
 
-# -------------------------------
+# -----------------------
 # Load Embedding Model
-# -------------------------------
+# -----------------------
 @st.cache_resource
 def load_model():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
 model = load_model()
 
-# -------------------------------
+# -----------------------
 # Extract PDF Text
-# -------------------------------
+# -----------------------
 def extract_text(pdf_file):
     reader = PdfReader(pdf_file)
 
@@ -27,29 +25,40 @@ def extract_text(pdf_file):
 
     for page in reader.pages:
         page_text = page.extract_text()
-
         if page_text:
             text += page_text + "\n"
 
     return text
 
 
-# -------------------------------
+# -----------------------
 # Better Chunking
-# -------------------------------
-def chunk_text(text):
+# -----------------------
+def chunk_text(text, max_chars=500):
 
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=100
-    )
+    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
 
-    return splitter.split_text(text)
+    chunks = []
+    current = ""
+
+    for para in paragraphs:
+
+        if len(current) + len(para) < max_chars:
+            current += para + "\n"
+
+        else:
+            chunks.append(current.strip())
+            current = para + "\n"
+
+    if current:
+        chunks.append(current.strip())
+
+    return chunks
 
 
-# -------------------------------
+# -----------------------
 # Create Vector Index
-# -------------------------------
+# -----------------------
 def create_index(chunks):
 
     embeddings = model.encode(
@@ -61,76 +70,40 @@ def create_index(chunks):
 
     index = faiss.IndexFlatIP(dimension)
 
-    index.add(np.array(embeddings))
+    index.add(np.array(embeddings).astype("float32"))
 
     return index
 
 
-# -------------------------------
-# Retrieve Context
-# -------------------------------
-def retrieve(query, index, chunks, k=3):
+# -----------------------
+# Search
+# -----------------------
+def search(query, index, chunks, k=3):
 
     query_embedding = model.encode(
         [query],
         normalize_embeddings=True
-    )
+    ).astype("float32")
 
-    scores, indices = index.search(
-        np.array(query_embedding),
-        k
-    )
+    scores, indices = index.search(query_embedding, k)
 
-    retrieved_chunks = []
+    results = []
 
-    for idx in indices[0]:
-        retrieved_chunks.append(chunks[idx])
+    for score, idx in zip(scores[0], indices[0]):
 
-    return "\n\n".join(retrieved_chunks)
+        if idx != -1:
+            results.append({
+                "score": float(score),
+                "text": chunks[idx]
+            })
 
-
-# -------------------------------
-# Ask Ollama
-# -------------------------------
-def ask_llm(question, context):
-
-    prompt = f"""
-You are a helpful assistant.
-
-Answer ONLY using the information given below.
-
-If the answer is not present in the context, reply:
-
-"I couldn't find that information in the uploaded PDF."
-
-Keep your answer short and precise.
-
-Context:
-{context}
-
-Question:
-{question}
-
-Answer:
-"""
-
-    response = ollama.chat(
-        model="llama3.2",
-        messages=[
-            {
-                "role": "user",
-                "content": prompt
-            }
-        ]
-    )
-
-    return response["message"]["content"]
+    return results
 
 
-# -------------------------------
+# -----------------------
 # UI
-# -------------------------------
-st.title("📄 PDF Chatbot (Offline - Ollama)")
+# -----------------------
+st.title("📄 PDF Semantic Search")
 st.write("Upload a PDF and ask questions.")
 
 uploaded_file = st.file_uploader(
@@ -148,29 +121,32 @@ if uploaded_file:
 
         index = create_index(chunks)
 
-    st.success("✅ PDF Ready!")
+    st.success(f"PDF Ready! ({len(chunks)} chunks indexed)")
 
-    question = st.text_input("Ask your question")
+    query = st.text_input("Ask a question")
 
-    if question:
+    if query:
 
-        with st.spinner("Thinking..."):
+        results = search(query, index, chunks)
 
-            context = retrieve(
-                question,
-                index,
-                chunks
-            )
+        if results:
 
-            answer = ask_llm(
-                question,
-                context
-            )
+            st.subheader("📌 Best Match")
 
-        st.subheader("📌 Answer")
+            st.success(results[0]["text"])
 
-        st.success(answer)
+            st.caption(f"Similarity Score: {results[0]['score']:.3f}")
 
-        with st.expander("Retrieved Context"):
+            if len(results) > 1:
 
-            st.write(context)
+                with st.expander("Other Relevant Sections"):
+
+                    for i, res in enumerate(results[1:], start=2):
+
+                        st.markdown(f"### Match {i}")
+                        st.caption(f"Score: {res['score']:.3f}")
+                        st.write(res["text"])
+
+        else:
+
+            st.warning("No relevant information found.")
