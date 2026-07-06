@@ -6,59 +6,55 @@ import numpy as np
 
 st.set_page_config(page_title="PDF Chatbot", page_icon="📄")
 
-# -----------------------
+# -----------------------------
 # Load Embedding Model
-# -----------------------
+# -----------------------------
 @st.cache_resource
 def load_model():
-    return SentenceTransformer("all-MiniLM-L6-v2")
+    return SentenceTransformer("BAAI/bge-small-en-v1.5")
+    # If this model causes deployment issues,
+    # switch back to:
+    # SentenceTransformer("all-MiniLM-L6-v2")
 
 model = load_model()
 
-# -----------------------
-# Extract PDF Text
-# -----------------------
+
+# -----------------------------
+# Extract Text
+# -----------------------------
 def extract_text(pdf_file):
+
     reader = PdfReader(pdf_file)
 
     text = ""
 
     for page in reader.pages:
+
         page_text = page.extract_text()
+
         if page_text:
             text += page_text + "\n"
 
     return text
 
 
-# -----------------------
-# Better Chunking
-# -----------------------
-def chunk_text(text, max_chars=500):
+# -----------------------------
+# Paragraph Chunking
+# -----------------------------
+def chunk_text(text):
 
-    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
+    paragraphs = [
+        p.strip()
+        for p in text.split("\n")
+        if p.strip()
+    ]
 
-    chunks = []
-    current = ""
-
-    for para in paragraphs:
-
-        if len(current) + len(para) < max_chars:
-            current += para + "\n"
-
-        else:
-            chunks.append(current.strip())
-            current = para + "\n"
-
-    if current:
-        chunks.append(current.strip())
-
-    return chunks
+    return paragraphs
 
 
-# -----------------------
-# Create Vector Index
-# -----------------------
+# -----------------------------
+# Create FAISS Index
+# -----------------------------
 def create_index(chunks):
 
     embeddings = model.encode(
@@ -66,24 +62,28 @@ def create_index(chunks):
         normalize_embeddings=True
     )
 
+    embeddings = np.array(embeddings).astype("float32")
+
     dimension = embeddings.shape[1]
 
     index = faiss.IndexFlatIP(dimension)
 
-    index.add(np.array(embeddings).astype("float32"))
+    index.add(embeddings)
 
     return index
 
 
-# -----------------------
+# -----------------------------
 # Search
-# -----------------------
-def search(query, index, chunks, k=3):
+# -----------------------------
+def search(query, index, chunks, k=5):
 
     query_embedding = model.encode(
         [query],
         normalize_embeddings=True
-    ).astype("float32")
+    )
+
+    query_embedding = np.array(query_embedding).astype("float32")
 
     scores, indices = index.search(query_embedding, k)
 
@@ -92,19 +92,23 @@ def search(query, index, chunks, k=3):
     for score, idx in zip(scores[0], indices[0]):
 
         if idx != -1:
-            results.append({
-                "score": float(score),
-                "text": chunks[idx]
-            })
+
+            results.append(
+                {
+                    "score": float(score),
+                    "text": chunks[idx]
+                }
+            )
 
     return results
 
 
-# -----------------------
+# -----------------------------
 # UI
-# -----------------------
+# -----------------------------
 st.title("📄 PDF Semantic Search")
-st.write("Upload a PDF and ask questions.")
+
+st.write("Upload a PDF and ask questions from it.")
 
 uploaded_file = st.file_uploader(
     "Upload PDF",
@@ -113,7 +117,7 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file:
 
-    with st.spinner("Processing PDF..."):
+    with st.spinner("Reading PDF..."):
 
         text = extract_text(uploaded_file)
 
@@ -121,9 +125,9 @@ if uploaded_file:
 
         index = create_index(chunks)
 
-    st.success(f"PDF Ready! ({len(chunks)} chunks indexed)")
+    st.success(f"✅ PDF Ready! ({len(chunks)} searchable sections)")
 
-    query = st.text_input("Ask a question")
+    query = st.text_input("Ask your question")
 
     if query:
 
@@ -131,21 +135,27 @@ if uploaded_file:
 
         if results:
 
+            best = results[0]
+
             st.subheader("📌 Best Match")
 
-            st.success(results[0]["text"])
+            st.success(best["text"])
 
-            st.caption(f"Similarity Score: {results[0]['score']:.3f}")
+            st.caption(
+                f"Similarity Score: {best['score']:.3f}"
+            )
 
-            if len(results) > 1:
+            with st.expander("View Other Relevant Sections"):
 
-                with st.expander("Other Relevant Sections"):
+                for i, res in enumerate(results[1:], start=2):
 
-                    for i, res in enumerate(results[1:], start=2):
+                    st.markdown(f"### Match {i}")
 
-                        st.markdown(f"### Match {i}")
-                        st.caption(f"Score: {res['score']:.3f}")
-                        st.write(res["text"])
+                    st.caption(
+                        f"Similarity Score: {res['score']:.3f}"
+                    )
+
+                    st.write(res["text"])
 
         else:
 
